@@ -1,11 +1,18 @@
 import React, { useState, useEffect } from 'react'
-import { Container, Typography, TextField, Button } from '@mui/material'
+import { Container, Typography, TextField, Button, CircularProgress, Rating } from '@mui/material'
+import axios from 'axios'
+import orderBy from 'lodash.orderby'
+import RestaurantCard from './components/RestaurantCard'
+
+const API_KEY = 'AIzaSyB79fcZivzpCj4wrRc8ZRuNZhRcSQ2Qstg'
 
 function App() {
   const [location, setLocation] = useState('')
   const [radius, setRadius] = useState(1000)
   const [userPosition, setUserPosition] = useState(null)
   const [geoError, setGeoError] = useState('')
+  const [restaurants, setRestaurants] = useState([])
+  const [loading, setLoading] = useState(false)
 
   useEffect(() => {
     if (navigator.geolocation) {
@@ -29,7 +36,52 @@ function App() {
       setGeoError('Veuillez entrer une position ou autoriser la géolocalisation')
       return
     }
-    // Implémentation de la recherche
+
+    setLoading(true)
+    try {
+      const response = await axios.get(
+        `https://maps.googleapis.com/maps/api/place/nearbysearch/json?location=${location}&radius=${radius}&type=restaurant&key=${API_KEY}`
+      )
+      
+      const restaurantsWithDetails = await Promise.all(
+        response.data.results.map(async (restaurant) => {
+          const detailsResponse = await axios.get(
+            `https://maps.googleapis.com/maps/api/place/details/json?place_id=${restaurant.place_id}&fields=name,rating,reviews,formatted_address,geometry&key=${API_KEY}`
+          )
+          return {
+            ...restaurant,
+            ...detailsResponse.data.result,
+            distance: calculateDistance(
+              userPosition.lat,
+              userPosition.lng,
+              detailsResponse.data.result.geometry.location.lat,
+              detailsResponse.data.result.geometry.location.lng
+            )
+          }
+        })
+      )
+
+      setRestaurants(orderBy(restaurantsWithDetails, ['distance']))
+    } catch (error) {
+      console.error('Erreur lors de la recherche:', error)
+      setGeoError('Une erreur est survenue lors de la recherche')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const calculateDistance = (lat1, lon1, lat2, lon2) => {
+    const R = 6371 // Rayon de la Terre en km
+    const dLat = (lat2 - lat1) * (Math.PI / 180)
+    const dLon = (lon2 - lon1) * (Math.PI / 180)
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos((lat1 * Math.PI) / 180) *
+        Math.cos((lat2 * Math.PI) / 180) *
+        Math.sin(dLon / 2) *
+        Math.sin(dLon / 2)
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+    return R * c * 1000 // Distance en mètres
   }
 
   return (
@@ -44,7 +96,7 @@ function App() {
         </Typography>
       )}
       
-      <div className="flex gap-4 mb-8">
+      <div className="flex flex-col md:flex-row gap-4 mb-8">
         <TextField
           label="Votre position"
           value={location}
@@ -58,18 +110,24 @@ function App() {
           type="number"
           value={radius}
           onChange={(e) => setRadius(e.target.value)}
+          className="w-32"
         />
         
         <Button
           variant="contained"
           onClick={handleSearch}
+          disabled={loading}
           className="h-14"
         >
-          Rechercher
+          {loading ? <CircularProgress size={24} /> : 'Rechercher'}
         </Button>
       </div>
       
-      {/* Section des résultats */}
+      <div className="space-y-4">
+        {restaurants.map((restaurant) => (
+          <RestaurantCard key={restaurant.place_id} restaurant={restaurant} />
+        ))}
+      </div>
     </Container>
   )
 }
